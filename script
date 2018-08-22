@@ -1,0 +1,63 @@
+#!/bin/bash
+ENV=''
+while [ "$ENV" = "" ]; do
+    echo -n "Введите название среды: "
+    read ENV
+done
+
+ACT_VER_API=$(curl -s http://porter.d/v1/builds/ | jq '.[] | select(.name=="api.zp.ru-release").build')
+OLD_VER_API=$(ssh root@nginx-api.$ENV -i ~/.ssh/id_rsa_env "readlink -f /srv/http/api.zp.ru" | awk -F '-' '{print $2}')
+echo Актуальная версия api: ${ACT_VER_API}
+echo Версия api на вашей среде: ${OLD_VER_API}
+ 
+read -p "Хотите обновить пакеты api и auth ? [Y] or [N]: "
+case $(echo $REPLY | tr '[A-Z]' '[a-z]') in
+y|yes)  if [[ $ACT_VER_API > $OLD_VER_API ]]; then
+	URL_DEP="https://deployer.zp.d:31443/v1/environment/$ENV/"
+	ACT_VER_AUTH=$(curl -s http://porter.d/v1/builds/ | jq '.[] | select(.name=="auth.zp.ru-release").build')
+	ACT_VER_ADMIN=$(curl -s http://porter.d/v1/builds/ | jq '.[] | select(.name=="admin.zp.ru-release").build')
+
+	(ssh root@nginx-api.$ENV "easy -p api.zp.ru -b ${ACT_VER_API} -x")
+	(ssh root@nginx-api.$ENV "easy -p api.zp.ru -b ${ACT_VER_API} -i")
+	(ssh root@php-api.$ENV "easy -p api.zp.ru -b ${ACT_VER_API} -x")
+	(ssh root@php-api.$ENV "easy -p api.zp.ru -b ${ACT_VER_API} -i")
+
+	(ssh root@nginx-auth.$ENV "easy -p auth.zp.ru -b ${ACT_VER_AUTH} -x")
+	(ssh root@nginx-auth.$ENV "easy -p auth.zp.ru -b ${ACT_VER_AUTH} -i")
+	(ssh root@php-auth.$ENV "easy -p auth.zp.ru -b ${ACT_VER_AUTH} -x")
+	(ssh root@php-auth.$ENV "easy -p auth.zp.ru -b ${ACT_VER_AUTH} -i")
+
+	(ssh root@admin.$ENV "easy -p auth.zp.ru -b ${ACT_VER_ADMIN} -x")
+	(ssh root@admin.$ENV "easy -p auth.zp.ru -b ${ACT_VER_ADMIN} -i")
+	echo -e "\e[32mВерсии api и auth обновленны до актуальных\e[0m"
+	else
+	echo -e "\e[32mВерсии пакетов актуальны\e[0m"
+	fi
+    ;;
+    *) echo -e "\e[32mВерсии пакетов не обновлены\e[0m"  ;; 
+	esac
+
+read -p "Хотите обновить ресурсы: elastic, mongo, mongo billing, mysql? [Y] or [N]: "
+	case $(echo $REPLY | tr '[A-Z]' '[a-z]') in
+	y|yes)	
+	DEPLOYER_URL="https://deployer.zp.d:31443/v1/environment/$ENV/"
+
+	ENV_RES=$(curl -s $DEPLOYER_URL -k | jq '.environment.resources')
+    ELASTIC_ID=$(echo "$ENV_RES" | jq '."zp-api_elastic".id')
+    MONGO_ID=$(echo "$ENV_RES" | jq '."mongo-zp-api".id')
+    MONGO_BILL_ID=$(echo "$ENV_RES" | jq '."mongo-zp-billing".id')
+    MYSQL_ID=$(echo "$ENV_RES" | jq '."mysql-job".id')
+
+	refresher() {
+        REFRESH_URL="http://depare.dbfarmd.zp.service.d:8581/v2/instance/$1/refresh"
+        curl -X PUT "REFRESH_URL"
+        }
+
+    refresher "$ELASTIC_ID"
+    refresher "$MONGO_ID"
+    refresher "$MONGO_BILL_ID"
+    refresher "$MYSQL_ID"
+	echo -e "\e[32mВерсии ресурсов обновленны до актуальных версий\e[0m"
+    ;;
+    *) echo -e "\e[32mВерсии ресурсов не обновлены\e[0m"  ;; 
+	esac
